@@ -18,10 +18,15 @@ package com.stratio.sparkta.driver
 
 import java.io.File
 import java.net.URI
+import scala.concurrent.duration._
+import scala.util.{Failure, Success, Try}
 
 import akka.actor.{ActorSystem, Props}
 import akka.pattern.ask
 import akka.util.Timeout
+import com.typesafe.config.ConfigFactory
+import org.apache.commons.io.FileUtils
+
 import com.stratio.sparkta.driver.SparktaJob._
 import com.stratio.sparkta.driver.service.StreamingContextService
 import com.stratio.sparkta.driver.util.{HdfsUtils, PolicyUtils}
@@ -29,12 +34,8 @@ import com.stratio.sparkta.serving.core.helpers.JarsHelper
 import com.stratio.sparkta.serving.core.models.{AggregationPoliciesModel, PolicyStatusModel, SparktaSerializer}
 import com.stratio.sparkta.serving.core.policy.status.PolicyStatusActor.Update
 import com.stratio.sparkta.serving.core.policy.status.{PolicyStatusActor, PolicyStatusEnum}
+import com.stratio.sparkta.serving.core.utils.HexUtils
 import com.stratio.sparkta.serving.core.{AppConstant, CuratorFactoryHolder, SparktaConfig}
-import com.typesafe.config.ConfigFactory
-import org.apache.commons.io.FileUtils
-
-import scala.concurrent.duration._
-import scala.util.{Failure, Success, Try}
 
 object SparktaClusterJob extends SparktaSerializer {
 
@@ -43,7 +44,9 @@ object SparktaClusterJob extends SparktaSerializer {
   def main(args: Array[String]): Unit = {
     if (checkArgs(args)) {
       Try {
-        initSparktaConfig(args(4), args(3))
+        val zk = HexUtils.hex2string(args(3))
+        val cfgString = HexUtils.hex2string(args(4))
+        initSparktaConfig(cfgString, zk)
         val policy = getPolicyFromZookeeper(args(0))
         val hadoopUserName = scala.util.Properties.envOrElse("HADOOP_USER_NAME", AppConstant.DefaultHadoopUserName)
         val hdfsUgi=HdfsUtils.ugi(hadoopUserName)
@@ -85,9 +88,13 @@ object SparktaClusterJob extends SparktaSerializer {
     }
   }
 
-  def initSparktaConfig(detailConfig: String, zKConfig: String): Unit = {
-    val configStr = s"$detailConfig,$zKConfig".stripPrefix(",").stripSuffix(",")
-    SparktaConfig.initMainConfig(Some(ConfigFactory.parseString(s"{$configStr}").atKey("sparkta")))
+  def cleanCommas(value: String): String = value.stripPrefix(",").stripSuffix(",")
+
+  def initSparktaConfig(detailConfig: String, zkConfig: String): Unit = {
+    val detail = ConfigFactory.parseString(cleanCommas(detailConfig))
+    val zk = ConfigFactory.parseString(cleanCommas(zkConfig))
+    val merged = detail.withFallback(zk).atKey("sparkta")
+    SparktaConfig.initMainConfig(Some(merged))
   }
 
   def addHdfsFiles(hdfsUtils: HdfsUtils, hdfsPath: String): Array[URI] = {
